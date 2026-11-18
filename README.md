@@ -1,20 +1,20 @@
 # Databucket end-to-end tests
 
 Tests of the REST API and the GUI of a running Databucket, with [Playwright](https://playwright.dev) and TypeScript.
-They are not part of the Gradle build; GitHub Actions runs them on every pull request (`.github/workflows/e2e.yml`).
+They are run by hand against a Databucket you start yourself; no CI runs them.
 
 ## Running
 
-Start Databucket, e.g. the docker compose of this repository (http://databucket.localhost, user `super` / `super`):
+Start Databucket, e.g. the docker compose of [databucket-server](https://github.com/databucket/databucket-server)
+(http://databucket.localhost, user `super` / `super`):
 
 ```
-cd docker && docker compose up -d --build
+cd databucket-server/docker && docker compose up -d --build
 ```
 
-Then:
+Then, in this repository:
 
 ```
-cd e2e
 npm install
 npx playwright install chromium   # once
 npm test                          # everything; npm run test:api / npm run test:ui
@@ -48,7 +48,7 @@ API: `project.createBucket(...)`, `project.createView(...)`, `project.quietly('r
 ## The report
 
 [Allure](https://allurereport.org) in the classic Allure 2 layout (Allure 3 CLI with its `allure2` plugin, `allure-playwright`;
-no Java needed): `npm run report` generates `allure-report/index.html` (one file, opens from the disk) and opens it. In GitHub Actions it is the `allure-report` artifact of the run.
+no Java needed): `npm run report` generates `allure-report/index.html` (one file, opens from the disk) and opens it.
 
 - API calls are steps such as `POST /api/bucket/orders/get → 200` with the request and the response attached as one
   HTML view (`support/http-view.ts`): method, URL, status and time, then the request and the response with their
