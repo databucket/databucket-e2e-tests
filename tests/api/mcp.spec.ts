@@ -46,7 +46,7 @@ test.describe('MCP server', () => {
 
     const tools = await rpc(agent, 'tools/list');
     expect(tools.result.tools.map((tool: any) => tool.name).sort()).toEqual([
-      'delete_data', 'describe_bucket', 'find_data', 'generate_data', 'get_data', 'insert_data', 'list_buckets',
+      'create_bucket', 'delete_data', 'describe_bucket', 'find_data', 'generate_data', 'get_data', 'insert_data', 'list_buckets',
       'release_data', 'reserve_data', 'search_history', 'update_data',
     ]);
   });
@@ -160,6 +160,53 @@ test.describe('MCP server', () => {
     const found = await callTool(agent, 'find_data', { bucket: BUCKET, rules: [['$.login', '==', 'user-1010']] });
     expect(found.value.total).toBe(1);
     expect(found.value.data[0].createdBy).toBe(project.users.agent.username);
+  });
+
+  test('an admin creates a bucket from an example row, an agent fills it', async ({ project }) => {
+    const admin = await project.as('admin');
+    const created = await callTool(admin, 'create_bucket', {
+      name: 'customers',
+      description: 'Customers for the checkout tests',
+      sample: { login: 'anna', age: 34, active: true, birthDate: '1990-05-01', address: { city: 'Paris' }, roles: ['x'] },
+      fields: [{ path: '$.status', type: 'enum', values: ['active', 'blocked'] }],
+      indexedProperties: [{ path: '$.login', type: 'text' }],
+    });
+    expect(created.isError).toBe(false);
+    expect(created.value.bucket).toMatchObject({ name: 'customers', history: true, protectedData: false, dataClass: 'customers' });
+    expect(created.value.bucket.fields).toEqual([
+      { title: 'Login', path: '$.login', type: 'string' },
+      { title: 'Age', path: '$.age', type: 'numeric' },
+      { title: 'Active', path: '$.active', type: 'boolean' },
+      { title: 'Birth date', path: '$.birthDate', type: 'date' },
+      { title: 'City', path: '$.address.city', type: 'string' },
+      { title: 'Status', path: '$.status', type: 'select', values: ['active', 'blocked'] },
+    ]);
+    expect(created.value.bucket.indexedProperties).toEqual([{ path: '$.login', type: 'text' }]);
+    expect(created.value).toMatchObject({ view: 'customers', enums: ['customers Status'] });
+    expect(created.value.skipped[0]).toContain('$.roles');
+
+    // the view shows the bucket in the web application (members and up)
+    const member = await project.quietly('member');
+    const tree = await member.get('/api/session/access-tree', { expectStatus: 200 });
+    expect(tree.body.buckets.map((bucket: any) => bucket.name)).toContain('customers');
+    expect(tree.body.views.map((view: any) => view.name)).toContain('customers');
+
+    // everyone in the project, also an agent, can use it
+    const agent = await project.as('agent');
+    const generated = await callTool(agent, 'generate_data', {
+      bucket: 'customers',
+      count: 50,
+      fields: { '$.login': 'c-{n}', '$.status': { oneOf: ['active', 'blocked'] }, '$.address.city': '#{Address.city}' },
+    });
+    expect(generated.value.inserted).toBe(50);
+    const found = await callTool(agent, 'find_data', { bucket: 'customers', rules: [['$.login', '==', 'c-7']] });
+    expect(found.value.total).toBe(1);
+
+    // the name is taken now; an agent can't create buckets
+    const again = await callTool(admin, 'create_bucket', { name: 'customers', sample: { a: 1 } });
+    expect(again).toEqual({ isError: true, value: expect.stringContaining('already exists') });
+    const byAgent = await callTool(agent, 'create_bucket', { name: 'mine', sample: { a: 1 } });
+    expect(byAgent).toEqual({ isError: true, value: expect.stringContaining('needs the ADMIN role') });
   });
 
   test('explains mistakes to the agent', async ({ project }) => {
