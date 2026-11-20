@@ -46,7 +46,7 @@ test.describe('MCP server', () => {
 
     const tools = await rpc(agent, 'tools/list');
     expect(tools.result.tools.map((tool: any) => tool.name).sort()).toEqual([
-      'delete_data', 'describe_bucket', 'find_data', 'get_data', 'insert_data', 'list_buckets',
+      'delete_data', 'describe_bucket', 'find_data', 'generate_data', 'get_data', 'insert_data', 'list_buckets',
       'release_data', 'reserve_data', 'search_history', 'update_data',
     ]);
   });
@@ -130,6 +130,38 @@ test.describe('MCP server', () => {
     expect(found.value.data.map((row: any) => row.properties.login)).toEqual(['mine']);
   });
 
+  test('an agent generates many rows from a generator per property', async ({ project }) => {
+    const agent = await project.as('agent');
+    const fields = {
+      '$.login': 'user-{n}',
+      '$.name': '#{Name.fullName}',
+      '$.address.city': '#{Address.city}',
+      '$.age': { number: [18, 90] },
+      '$.status': { oneOf: ['active', 'blocked'], weights: [9, 1] },
+      '$.since': { date: ['2024-01-01', '2024-12-31'] },
+      '$.type': 'customer',
+    };
+
+    const first = await callTool(agent, 'generate_data', { bucket: BUCKET, fields, count: 1000, locale: 'pl', seed: 1 });
+    expect(first.isError).toBe(false);
+    expect(first.value).toMatchObject({ inserted: 1000, firstN: 1, lastN: 1000 });
+    expect(first.value.sample).toHaveLength(3);
+    const row = first.value.sample[0];
+    expect(row).toMatchObject({ login: 'user-1', type: 'customer', address: { city: expect.any(String) } });
+    expect(row.age).toBeGreaterThanOrEqual(18);
+    expect(row.since).toMatch(/^2024-\d\d-\d\d$/);
+
+    // the next call continues {n} after the last id, so the logins stay unique
+    const second = await callTool(agent, 'generate_data', { bucket: BUCKET, fields, count: 10 });
+    expect(second.value).toMatchObject({ inserted: 10, firstN: 1001, lastN: 1010 });
+
+    const all = await callTool(agent, 'find_data', { bucket: BUCKET, limit: 0 });
+    expect(all.value.total).toBe(1010);
+    const found = await callTool(agent, 'find_data', { bucket: BUCKET, rules: [['$.login', '==', 'user-1010']] });
+    expect(found.value.total).toBe(1);
+    expect(found.value.data[0].createdBy).toBe(project.users.agent.username);
+  });
+
   test('explains mistakes to the agent', async ({ project }) => {
     const agent = await project.as('agent');
 
@@ -141,6 +173,15 @@ test.describe('MCP server', () => {
 
     const unknownTag = await callTool(agent, 'insert_data', { bucket: BUCKET, rows: [{ properties: { a: 1 }, tagId: 999999 }] });
     expect(unknownTag).toEqual({ isError: true, value: expect.stringContaining('describe_bucket') });
+
+    const badGenerator = await callTool(agent, 'generate_data', { bucket: BUCKET, count: 10, fields: { '$.age': { number: [9, 1] } } });
+    expect(badGenerator).toEqual({ isError: true, value: expect.stringContaining("'$.age': min is greater than max") });
+
+    const badExpression = await callTool(agent, 'generate_data', { bucket: BUCKET, count: 10, fields: { '$.x': '#{NoSuch.thing}' } });
+    expect(badExpression).toEqual({ isError: true, value: expect.stringContaining("Field '$.x'") });
+
+    const tooMany = await callTool(agent, 'generate_data', { bucket: BUCKET, count: 10001, fields: { '$.a': 1 } });
+    expect(tooMany).toEqual({ isError: true, value: expect.stringContaining('1..10000') });
 
     const nothing = await callTool(agent, 'find_data', { bucket: BUCKET, limit: 0 });
     expect(nothing.value.total).toBe(0);
