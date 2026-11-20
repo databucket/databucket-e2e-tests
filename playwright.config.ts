@@ -28,6 +28,8 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
+        // English whatever the system language: the server translates some messages (Accept-Language)
+        locale: 'en-US',
         // in the report: a screenshot of the end of every test, the trace (page snapshots, network, console) of every
         // test, a video of the failed ones
         screenshot: 'on',
